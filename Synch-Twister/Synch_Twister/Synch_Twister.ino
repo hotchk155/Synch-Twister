@@ -11,10 +11,212 @@
 
 #define P_SHCLK  19
 #define P_SHDAT  18
-
 #define P_SWREAD 8
-
 #define P_HEARTBEAT 13
+
+#define CBIT_DIGIT0  (1<<2) 
+#define CBIT_DIGIT1  (1<<1)
+#define CBIT_DIGIT2  (1<<0)
+#define CBIT_DIGIT3  (1<<3)
+#define DBIT_DIGIT4  (1<<7)
+#define CBIT_SHCLK   (1<<5)
+#define CBIT_SHDAT   (1<<4)
+#define BBIT_SWREAD  (1<<0)
+
+
+
+
+
+
+// Map LED segments to shift register bits
+//
+//  aaa
+// f   b
+//  ggg
+// e   c
+//  ddd
+#define SEG_A    0x80
+#define SEG_B    0x01
+#define SEG_C    0x04
+#define SEG_D    0x10
+#define SEG_E    0x20
+#define SEG_F    0x40
+#define SEG_G    0x02
+#define SEG_DP   0x08
+
+// Define the LED segment patterns for digits
+#define DGT_0 (SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F)
+#define DGT_1 (SEG_B|SEG_C)
+#define DGT_2 (SEG_A|SEG_B|SEG_D|SEG_E|SEG_G)
+#define DGT_3 (SEG_A|SEG_B|SEG_C|SEG_D|SEG_G)
+#define DGT_4 (SEG_B|SEG_C|SEG_F|SEG_G)
+#define DGT_5 (SEG_A|SEG_C|SEG_D|SEG_F|SEG_G)
+#define DGT_6 (SEG_A|SEG_C|SEG_D|SEG_E|SEG_F|SEG_G)
+#define DGT_7 (SEG_A|SEG_B|SEG_C)
+#define DGT_8 (SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F|SEG_G)
+#define DGT_9 (SEG_A|SEG_B|SEG_C|SEG_F|SEG_G)
+
+#define UI_KEYPRESS  1
+#define UI_KEYHELD   2
+#define UI_KEYREPEAT 4
+#define UI_NEW_KEY_PRESS (UI_KEYPRESS|UI_KEYREPEAT)
+
+#define UI_DEBOUNCE_MS 20
+#define UI_MAXLEDARRAY  5
+byte uiLEDState[UI_MAXLEDARRAY];    // the output bit patterns for the LEDs
+byte uiDebounceCount[UI_MAXLEDARRAY];  // input status for switches
+byte uiKeyStatus[UI_MAXLEDARRAY];
+byte uiLEDIndex = 0;
+byte uiSwitchStates;
+byte uiLastSwitchStates;
+unsigned long uiAutoRepeatTime;
+#define UI_AUTO_REPEAT_DELAY 500
+#define UI_AUTO_REPEAT_PERIOD 50
+
+
+void uiInit()
+{
+  memset(uiLEDState, 0, sizeof(uiLEDState));
+  memset(uiDebounceCount, 0, sizeof(uiDebounceCount));
+  memset(uiKeyStatus, 0, sizeof(uiKeyStatus));
+  uiLEDIndex = 0;
+  uiSwitchStates = 0;
+  uiLastSwitchStates = 0;
+  uiAutoRepeatTime = 0;
+  
+  // start the interrupt to service the UI   
+  TCCR2A = 0;
+  TCCR2B = 1<<CS22 | 0<<CS21 | 1<<CS20; // control refresh rate of display
+  TIMSK2 = 1<<TOIE2;
+  TCNT2 = 0; 
+}
+
+// Configure the LEDs to show a number
+void uiShowNumber(int n)
+{
+  byte xlatDigit[10]  = {  DGT_0,  DGT_1,  DGT_2,  DGT_3,  DGT_4,  DGT_5,  DGT_6,  DGT_7,  DGT_8,  DGT_9 };
+  uiLEDState[0] = xlatDigit[n/1000]; n%=1000;
+  uiLEDState[1] = xlatDigit[n/100]; n%=100;
+  uiLEDState[2] = xlatDigit[n/10]; n%=10;
+  uiLEDState[3] = xlatDigit[n]; 
+}
+
+ISR(TIMER2_OVF_vect) 
+{
+  // Read the switch status (do it now, rather than on previous
+  // tick so we can ensure adequate setting time)
+  if(PINB & BBIT_SWREAD)
+    uiSwitchStates |= (1<<uiLEDIndex);
+  else
+    uiSwitchStates &= ~(1<<uiLEDIndex);
+    
+//  uiInputState[uiLEDIndex] = !!
+  
+  // Turn off all displays  
+  PORTC &= ~(CBIT_DIGIT0|CBIT_DIGIT1|CBIT_DIGIT2|CBIT_DIGIT3);
+  PORTD &= ~(DBIT_DIGIT4);
+
+  // Unrolled loop to load shift register
+  byte d = uiLEDState[uiLEDIndex];
+  // bit 7    
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x80) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // bit 6
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x40) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // bit 5    
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x20) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // bit 4    
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x10) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // bit 3    
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x08) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // bit 2    
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x04) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // bit 1    
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x02) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // bit 0
+  PORTC &= ~CBIT_SHCLK;
+  if(d & 0x01) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
+  PORTC |= CBIT_SHCLK;
+  // flush    
+  PORTC &= ~CBIT_SHCLK;
+  PORTC |= CBIT_SHCLK;
+  
+  // Turn on the appropriate display
+  switch(uiLEDIndex)
+  {
+    case 0: PORTC |= CBIT_DIGIT0; break;
+    case 1: PORTC |= CBIT_DIGIT1; break;
+    case 2: PORTC |= CBIT_DIGIT2; break;
+    case 3: PORTC |= CBIT_DIGIT3; break;
+    case 4: PORTD |= DBIT_DIGIT4; break;
+  }
+  
+  // Next pass we'll check the next display
+  if(++uiLEDIndex >= UI_MAXLEDARRAY)
+    uiLEDIndex = 0;
+}
+
+void uiRun(unsigned long milliseconds)
+{
+  byte autoRepeat = 0;
+  
+    
+  if(!uiSwitchStates)
+  {
+    uiAutoRepeatTime = 0; 
+    uiLastSwitchStates = 0;
+  }
+  else if(uiLastSwitchStates != uiSwitchStates)
+  {
+    uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_DELAY;
+    uiLastSwitchStates = uiSwitchStates;
+  }
+  else if(uiAutoRepeatTime < milliseconds)
+  {
+    uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_PERIOD;
+    autoRepeat = 1;
+  }
+  
+  for(int i=0; i<UI_MAXLEDARRAY; ++i)
+  {
+    // are we debouncing?
+    if(uiDebounceCount[i])
+    {
+      --uiDebounceCount[i];
+    }
+    else
+    {      
+      if((uiSwitchStates & (1<<i)) && !uiKeyStatus[i])
+      {
+        uiKeyStatus[i] = UI_KEYPRESS|UI_KEYHELD;
+        uiDebounceCount[i] = UI_DEBOUNCE_MS;
+      }
+      else if(!(uiSwitchStates & (1<<i)) && uiKeyStatus[i])
+      {
+        uiKeyStatus[i] = 0;
+        uiDebounceCount[i] = UI_DEBOUNCE_MS;
+      }
+      else if(autoRepeat && uiKeyStatus[i])
+      {
+        uiKeyStatus[i] |= UI_KEYREPEAT;
+      }
+    }
+  }
+}
+
 
 
 /*
@@ -37,7 +239,13 @@
 #define TICKS_PER_BEAT  96
 #define TICKS_PER_STEP  24
 
-class CSwing
+class IGroove
+{
+public:  
+  virtual int getStepTime(int s) = 0;
+};
+
+class CSwing : public IGroove
 {
 public:  
   CSwing() : SwingAmount(66.0) {}
@@ -56,6 +264,27 @@ public:
   }
 };
 
+#define PI 3.1415926536
+class CWave : public IGroove
+{
+public: 
+  int Seed;
+  int Intensity;
+  CWave() 
+  {
+    Seed = 0;
+    Intensity = 100;
+  }
+  int getStepTime(int s)
+  {
+    if(Seed) randomSeed(Seed + s);  
+    double z = (random(1000) - random(1000))/1000.0;
+    return (TICKS_PER_STEP * s) + ((Intensity*z*TICKS_PER_STEP)/100.0); 
+    
+    //double an = (PI/2.0) * ((double)s/16);
+//    return (int)(16.0 * TICKS_PER_STEP * cos(an));
+  }  
+};
 
 class CTicker
 {
@@ -66,7 +295,7 @@ public:
   byte PulseRecoverTime;     // minimum milliseconds between pulses
   byte ActiveSteps;          // Total number of steps used before repeating sequence
 //  int  StepTime[MAX_STEPS];   // 
-  CSwing *pGroove;
+  IGroove *pGroove;
 private:
   enum {
     STATE_READY,   
@@ -84,7 +313,8 @@ private:
 public: 
   CTicker()
   {
-    pGroove = new CSwing;
+//    pGroove = new CSwing;
+    pGroove = new CWave;
     reset();
   }
   
@@ -234,80 +464,6 @@ void runTickers(unsigned long milliseconds)
 
 
 
-void loadSegments(byte d)
-{
-  byte m=0x80;
-  while(m)
-  {
-    digitalWrite(P_SHCLK, LOW);
-    digitalWrite(P_SHDAT, !!(m&d));
-    digitalWrite(P_SHCLK, HIGH);
-    m>>=1;
-  }
-  digitalWrite(P_SHCLK, LOW);
-  digitalWrite(P_SHCLK, HIGH);
-}
-void enableDisplay(byte which, byte state)
-{
-    digitalWrite(P_DIGIT0, (which==0)? state:LOW);
-    digitalWrite(P_DIGIT1, (which==1)? state:LOW);
-    digitalWrite(P_DIGIT2, (which==2)? state:LOW);
-    digitalWrite(P_DIGIT3, (which==3)? state:LOW);
-    digitalWrite(P_DIGIT4, (which==4)? state:LOW);
-}
-
-byte segs[5];
-byte sw[5];
-void refresh()
-{
-  for(int i=0; i<5; ++i)
-  {
-    enableDisplay(i,LOW);
-    loadSegments(segs[i]);
-    enableDisplay(i,HIGH);
-    delay(1);
-    sw[i] = !!digitalRead(P_SWREAD);    
-  }
-}
-
-//  aaa
-// f   b
-// f   b
-//  ggg
-// e   c
-// e   c
-//  ddd
-
-#define SEG_B    0x01
-#define SEG_G    0x02
-#define SEG_C    0x04
-#define SEG_DP    0x08
-#define SEG_D    0x10
-#define SEG_E    0x20
-#define SEG_F    0x40
-#define SEG_A   0x80
-
-
-
-#define DGT_0 (SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F)
-#define DGT_1 (SEG_B|SEG_C)
-#define DGT_2 (SEG_A|SEG_B|SEG_D|SEG_E|SEG_G)
-#define DGT_3 (SEG_A|SEG_B|SEG_C|SEG_D|SEG_G)
-#define DGT_4 (SEG_B|SEG_C|SEG_F|SEG_G)
-#define DGT_5 (SEG_A|SEG_C|SEG_D|SEG_F|SEG_G)
-#define DGT_6 (SEG_A|SEG_C|SEG_D|SEG_E|SEG_F|SEG_G)
-#define DGT_7 (SEG_A|SEG_B|SEG_C)
-#define DGT_8 (SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F|SEG_G)
-#define DGT_9 (SEG_A|SEG_B|SEG_C|SEG_F|SEG_G)
-
-byte xlatDigit[10]  = {  DGT_0,  DGT_1,  DGT_2,  DGT_3,  DGT_4,  DGT_5,  DGT_6,  DGT_7,  DGT_8,  DGT_9 };
-void showNumber(int n)
-{
-  segs[0] = xlatDigit[n/1000]; n%=1000;
-  segs[1] = xlatDigit[n/100]; n%=100;
-  segs[2] = xlatDigit[n/10]; n%=10;
-  segs[3] = xlatDigit[n]; 
-}
 
 #define HEARTBEAT_PERIOD 200
 byte heartBeatState;
@@ -328,6 +484,8 @@ void heartBeatRun(unsigned long milliseconds)
     digitalWrite(P_HEARTBEAT,heartBeatState);
   }
 }
+
+CWave W;
 
 void setup()
 {
@@ -372,30 +530,44 @@ void setup()
   Ticker1.PulseTime = 15;           
   Ticker1.PulseRecoverTime = 10;
   Ticker1.ActiveSteps = 16;
-//  straightSwing(Ticker1.StepTime, 66);
+  Ticker1.pGroove = &W;
   Ticker1.reset();
   
   setBPM(120);
   heartBeatInit();
 //Serial.begin(9600);  
+
+  cli();
+  uiInit();     
+  sei();  
+
 }
 
 
 
 int n = 999;
+unsigned long prevMilliseconds = 0;
 void loop()
 {
   unsigned long milliseconds = millis();
-  runTickers(milliseconds);
-//digitalWrite(13,HIGH);
-//delay(200);
-//digitalWrite(13,LOW);
+  if(prevMilliseconds != milliseconds)
+  {
+    prevMilliseconds = milliseconds;
+    runTickers(milliseconds);
     heartBeatRun(milliseconds);
-//  Serial.println(milliseconds, DEC);
-  showNumber(Ticker1.pGroove->SwingAmount);
-  if(sw[0] && !(milliseconds%100) && Ticker1.pGroove->SwingAmount > 1) Ticker1.pGroove->SwingAmount--;
-  if(sw[1] && !(milliseconds%100) && Ticker1.pGroove->SwingAmount < 99) Ticker1.pGroove->SwingAmount++;
-  refresh();
+    uiShowNumber(W.Intensity);
+    uiRun(milliseconds);
+    if(uiKeyStatus[0] & UI_NEW_KEY_PRESS)
+    {
+      uiKeyStatus[0]&=~UI_NEW_KEY_PRESS;
+      if(W.Intensity > 1) W.Intensity--;
+    }
+    if(uiKeyStatus[1] & UI_NEW_KEY_PRESS)
+    {
+      uiKeyStatus[1]&=~UI_NEW_KEY_PRESS;
+      if(W.Intensity < 99) W.Intensity++;
+    }
+  }
 }
 
 
