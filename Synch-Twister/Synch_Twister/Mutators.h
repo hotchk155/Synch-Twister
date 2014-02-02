@@ -34,11 +34,10 @@ class CNullMutator : public CMutator
 {
     void getName(byte *buf) 
     { 
-      // NoNE
-      buf[0] = SEG_A|SEG_B|SEG_C|SEG_D|SEG_G;
-      buf[1] = SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F;
-      buf[2] = SEG_A|SEG_B|SEG_C|SEG_D|SEG_G;
-      buf[3] = SEG_A|SEG_D|SEG_E|SEG_F|SEG_G;   
+      buf[0] = DGT_N;
+      buf[1] = DGT_O;
+      buf[2] = DGT_N;
+      buf[3] = DGT_E;
   }
     
   int getStepTime(int s) 
@@ -63,10 +62,10 @@ public:
   void getName(byte *buf) 
   { 
     // Shuf
-    buf[0] = SEG_A|SEG_C|SEG_D|SEG_F|SEG_G;
-    buf[1] = SEG_C|SEG_E|SEG_F|SEG_G;
-    buf[2] = SEG_C|SEG_D|SEG_E;
-    buf[3] = SEG_A|SEG_E|SEG_F|SEG_G;
+    buf[0] = DGT_S;
+    buf[1] = DGT_H;
+    buf[2] = DGT_U;
+    buf[3] = DGT_F;
   }
   
   int getStepTime(int s)
@@ -99,10 +98,10 @@ public:
   void getName(byte *buf) 
   { 
       // rAnd
-      buf[0] = SEG_E|SEG_G;
-      buf[1] = SEG_A|SEG_B|SEG_C|SEG_E|SEG_F|SEG_G;
-      buf[2] = SEG_C|SEG_E|SEG_G;
-      buf[3] = SEG_B|SEG_C|SEG_D|SEG_E|SEG_G;
+      buf[0] = DGT_R;
+      buf[1] = DGT_A;
+      buf[2] = DGT_N;
+      buf[3] = DGT_D;
   }
   int getStepTime(int s)
   {

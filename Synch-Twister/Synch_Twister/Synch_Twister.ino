@@ -1,3 +1,4 @@
+#include "Arduino.h"
 #include "Synch_Twister.h"
 #include "Mutators.h"
 #include "SynchChannel.h"
@@ -35,11 +36,6 @@
 #define DBIT_SELECT  (1<<2)
 
 
-////////////////////////////////////////////////////////
-//
-// SEVEN SEGMENT LED DISPLAY DEFINITIONS
-//
-////////////////////////////////////////////////////////
 
 
 ////////////////////////////////////////////////////////
@@ -49,45 +45,35 @@
 ////////////////////////////////////////////////////////
 
 #define UI_MAXLEDARRAY  5         // number of LED arrays
+#define UI_NUM_SWITCHES 6
 #define UI_DEBOUNCE_MS 20         // key debounce
 #define UI_AUTO_REPEAT_DELAY 500  // delay before key auto repeats
 #define UI_AUTO_REPEAT_PERIOD 50  // delay between auto repeats
-
-/*
-// Flags used in Key Status
-enum {
-  UI_KEYPRESS  = 0x01,
-  UI_KEYHELD   = 0x02,
-  UI_KEYREPEAT = 0x04,
-  UI_NEW_KEY_PRESS = (UI_KEYPRESS|UI_KEYREPEAT)
-};
-
-enum {
-  UI_KEY1 = 0,
-  UI_KEY2 = 1,
-  UI_KEY3 = 2,
-  UI_KEY4 = 3,
-  UI_KEY5 = 4
-};
-*/
+#define UI_DOUBLE_CLICK_TIME 200  // double click threshold
 
 enum 
 {
-  UI_KEY_0      = 0x01,
-  UI_KEY_1      = 0x02,
-  UI_KEY_2      = 0x04,
-  UI_KEY_3      = 0x08,
-  UI_KEY_4      = 0x10,
-  UI_KEY_SELECT = 0x20,
-  UI_KEY_PRESS  = 0x40,
-  UI_KEY_AUTO   = 0x80
+  UI_KEY_0      = 0x0001,
+  UI_KEY_1      = 0x0002,
+  UI_KEY_2      = 0x0004,
+  UI_KEY_3      = 0x0008,
+  UI_KEY_4      = 0x0010,
+  UI_KEY_SELECT = 0x0020, // must be next bit after scanned keys
+  
+  UI_KEY_PRESS  = 0x0100,
+  UI_KEY_HOLD   = 0x0200,
+  UI_KEY_AUTO   = 0x0400,
+  UI_KEY_DOUBLE = 0x0800
 };
 
 byte uiLEDState[UI_MAXLEDARRAY];       // the output bit patterns for the LEDs
-byte uiDebounceCount[UI_MAXLEDARRAY];  // debounce registers for switches
-byte uiKeyStatus;                      // input status for switches
+byte uiDebounceCount[UI_NUM_SWITCHES];  // debounce registers for switches
+unsigned int uiKeyStatus;              // input status for switches (The one other modules should read)
+unsigned int uiLastKeyStatus;          
+unsigned int uiLastKeypress;           
+unsigned long uiDoubleClickTime; 
 unsigned long uiAutoRepeatTime; 
-byte uiLEDIndex = 0;                   
+byte uiLEDIndex;                   
 byte uiSwitchStates;
 byte uiLastSwitchStates;              
 
@@ -121,8 +107,6 @@ ISR(TIMER2_OVF_vect)
   else
     uiSwitchStates &= ~(1<<uiLEDIndex);
     
-//  uiInputState[uiLEDIndex] = !!
-  
   // Turn off all displays  
   PORTC &= ~(CBIT_DIGIT0|CBIT_DIGIT1|CBIT_DIGIT2|CBIT_DIGIT3);
   PORTD &= ~(DBIT_DIGIT4);
@@ -182,12 +166,34 @@ ISR(TIMER2_OVF_vect)
 
 ////////////////////////////////////////////////////////
 // Configure the LEDs to show a decimal number
-void uiShowNumber(int n)
-{
+void uiShowNumber(int n, int start=0)
+{  
   byte xlatDigit[10]  = {  DGT_0,  DGT_1,  DGT_2,  DGT_3,  DGT_4,  DGT_5,  DGT_6,  DGT_7,  DGT_8,  DGT_9 };
-  uiLEDState[0] = xlatDigit[n/1000]; n%=1000;
-  uiLEDState[1] = xlatDigit[n/100]; n%=100;
-  uiLEDState[2] = xlatDigit[n/10]; n%=10;
+  int div[4] = {1000, 100, 10, 1};
+  if(start < 0 || start >= 4)
+  {
+    uiLEDState[0] = uiLEDState[1] = uiLEDState[2] = uiLEDState[3] = SEG_DP;
+  }
+  else
+  {
+    while(start < 4)
+    {
+      int divider = div[start];
+      uiLEDState[start] = xlatDigit[n/divider]; 
+      n%=divider;
+      ++start;
+    }
+  }
+}
+
+////////////////////////////////////////////////////////
+// Configure the LEDs to show a decimal number
+void uiShowHex(unsigned int n)
+{
+  byte xlatDigit[16]  = {  DGT_0,  DGT_1,  DGT_2,  DGT_3,  DGT_4,  DGT_5,  DGT_6,  DGT_7,  DGT_8,  DGT_9, DGT_A, DGT_B, DGT_C, DGT_D, DGT_E, DGT_F };
+  uiLEDState[0] = xlatDigit[n/0x1000]; n%=0x1000;
+  uiLEDState[1] = xlatDigit[n/0x100]; n%=0x100;
+  uiLEDState[2] = xlatDigit[n/0x10]; n%=0x10;
   uiLEDState[3] = xlatDigit[n]; 
 }
 
@@ -195,26 +201,16 @@ void uiShowNumber(int n)
 // Manage UI functions
 void uiRun(unsigned long milliseconds)
 {
-  // Check for auto repeats
-  byte autoRepeat = 0;
-  if(!uiSwitchStates)
-  {
-    uiAutoRepeatTime = 0; 
-    uiLastSwitchStates = 0;
-  }
-  else if(uiLastSwitchStates != uiSwitchStates)
-  {
-    uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_DELAY;
-    uiLastSwitchStates = uiSwitchStates;
-  }
-  else if(uiAutoRepeatTime < milliseconds)
-  {
-    uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_PERIOD;
-    autoRepeat = 1;
-  }
+  // Check the select key, which has its own IO pin
+  if(!digitalRead(P_SELECT))
+    uiSwitchStates |= UI_KEY_SELECT;
+  else  
+    uiSwitchStates &= ~UI_KEY_SELECT;
+    
   
-  // manage each switch
-  for(int i=0; i<UI_MAXLEDARRAY; ++i)
+  // Manage switch debouncing...
+  byte newKeyPress = 0;
+  for(int i=0; i<UI_NUM_SWITCHES; ++i)
   {    
     byte mask = 1<<i;
     
@@ -227,21 +223,51 @@ void uiRun(unsigned long milliseconds)
     {      
       if((uiSwitchStates & mask) && !(uiKeyStatus & mask)) // key pressed now, was not before
       {
-        uiKeyStatus |= mask | UI_KEY_PRESS;   // new key press
-        uiKeyStatus &= ~UI_KEY_AUTO;          // not auto repeating
-        uiDebounceCount[i] = UI_DEBOUNCE_MS;  // debounce
+        uiKeyStatus |= mask;
+        uiDebounceCount[i] = UI_DEBOUNCE_MS;        // debounce
+        newKeyPress = 1;
       }
       else if(!(uiSwitchStates & mask) && (uiKeyStatus & mask)) // key pressed before, not now
       {
-        uiKeyStatus &= ~(mask | UI_KEY_PRESS | UI_KEY_AUTO);   // unpress
+        uiKeyStatus &= ~mask;
         uiDebounceCount[i] = UI_DEBOUNCE_MS;  // debounce
-      }
-      else if(autoRepeat && (uiKeyStatus & mask))
-      {
-        uiKeyStatus |= UI_KEY_AUTO; // auto repeat
       }
     }
   }
+  
+  // Manage auto repeat etc
+  if(!(uiKeyStatus & 0x00FF)) // no keys pressed
+  {
+    uiKeyStatus = 0;
+    uiAutoRepeatTime = 0; 
+  }
+  else if(uiKeyStatus != uiLastKeyStatus) // change in keypress
+  {
+    uiKeyStatus &= 0x00FF; // clear flags    
+    if(newKeyPress)
+    {
+      if(uiKeyStatus == uiLastKeypress && milliseconds < uiDoubleClickTime)
+        uiKeyStatus |= UI_KEY_DOUBLE;      
+      uiLastKeypress = uiKeyStatus;
+      uiDoubleClickTime = milliseconds + UI_DOUBLE_CLICK_TIME;
+      uiKeyStatus |= UI_KEY_PRESS; 
+    }
+    uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_DELAY;
+  }
+  else 
+  {
+    // keys held - not a new press
+    uiKeyStatus &= ~(UI_KEY_PRESS|UI_KEY_DOUBLE|UI_KEY_AUTO);
+    if(uiAutoRepeatTime < milliseconds)
+    {
+      if(uiKeyStatus & UI_KEY_HOLD)  // key flagged as held?
+        uiKeyStatus |= UI_KEY_AUTO;  // now it is an auto repeat
+      else
+        uiKeyStatus |= UI_KEY_HOLD;  // otherwise flag as held
+      uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_PERIOD;
+    }
+  }
+  uiLastKeyStatus = uiKeyStatus;  
 }
 
 
@@ -297,10 +323,10 @@ void synchInit()
   synchNextTick = 0;
   synchLastMilliseconds = 0;
   
-  synchChannels[0].OutputPin = P_CLKOUT0;
-  synchChannels[1].OutputPin = P_CLKOUT1;
-  synchChannels[2].OutputPin = P_CLKOUT2;
-  synchChannels[3].OutputPin = P_CLKOUT3;  
+  synchChannels[0].setOutputPin(P_CLKOUT0);
+  synchChannels[1].setOutputPin(P_CLKOUT1);
+  synchChannels[2].setOutputPin(P_CLKOUT2);
+  synchChannels[3].setOutputPin(P_CLKOUT3);  
 }
 
 // Run the ticker outputs
@@ -346,23 +372,237 @@ void synchRun(unsigned long milliseconds)
 //
 ////////////////////////////////////////////////////////
 
-#define MENU_GLOBAL (-1)
-int menuChannel = MENU_GLOBAL;
-
-
-
-void menuInit()
+enum 
 {
+  MENU_KEY_SELECT = UI_KEY_SELECT,
+  MENU_KEY_PREV   = UI_KEY_2,
+  MENU_KEY_NEXT   = UI_KEY_3,
+  MENU_KEY_DEC    = UI_KEY_4,
+  MENU_KEY_INC    = UI_KEY_1,
+  MENU_KEY_ENTER  = UI_KEY_0,
+    
+  MENU_KEY_A      = MENU_KEY_NEXT,
+  MENU_KEY_B      = MENU_KEY_PREV,
+  MENU_KEY_C      = MENU_KEY_INC,
+  MENU_KEY_D      = MENU_KEY_DEC  
+};
+
+enum {  
+  MENU_CHAN_MUTATION = 0,
+  MENU_CHAN_PARAM1,
+  MENU_CHAN_PARAM2,
+  MENU_CHAN_PARAM3,
+  MENU_CHAN_PARAM4,
+  MENU_CHAN_STEPS,
+  MENU_CHAN_DIV,
+  MENU_CHAN_PULSEMS,
+  MENU_CHAN_RECOVERMS,
+  MENU_CHAN_INVERT,  
+  MENU_CHAN_MAX
+};
+
+enum {
+  MENU_CONTEXT_CHAN1  = 0,
+  MENU_CONTEXT_CHAN2  = 1,
+  MENU_CONTEXT_CHAN3  = 2,
+  MENU_CONTEXT_CHAN4  = 3,
+  MENU_CONTEXT_GLOBAL = 4
+};
+
+enum 
+{
+  MENU_LED_CHAN1 = 0x01,
+  MENU_LED_CHAN2 = 0x02,
+  MENU_LED_CHAN3 = 0x04,
+  MENU_LED_CHAN4 = 0x08,
+  MENU_LED_GLOBAL = 0x10
+};
+
+byte menuChannelParam;
+byte menuContext;
+
+void menuDisplayChannelParam()
+{
+  switch(menuChannelParam)
+  {
+    case MENU_CHAN_MUTATION:
+      synchChannels[menuContext].getMutator()->getName(uiLEDState);
+      break;
+    case MENU_CHAN_PARAM1:
+    case MENU_CHAN_PARAM2:
+    case MENU_CHAN_PARAM3:
+    case MENU_CHAN_PARAM4:
+      {
+        int whichParam = menuChannelParam - MENU_CHAN_PARAM1;
+        byte prefix[4] = { DGT_1, DGT_2, DGT_3, DGT_4 };
+        uiLEDState[0] = prefix[whichParam]|SEG_DP;
+        if(whichParam >= synchChannels[menuContext].getMutator()->getNumParams())
+        {
+          uiLEDState[1] = uiLEDState[2] = uiLEDState[3] = DGT_DASH;
+        }
+        else
+        {
+          uiShowNumber(synchChannels[menuContext].getMutator()->getParam(whichParam), 1);
+        }
+      }
+      break;    
+    case MENU_CHAN_STEPS:      
+          uiLEDState[0] = DGT_S;
+          uiLEDState[1] = DGT_T|SEG_DP;
+          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_STEPS), 2);
+          break;                   
+    case MENU_CHAN_DIV:
+          uiLEDState[0] = DGT_D;
+          uiLEDState[1] = DGT_I|SEG_DP;
+          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_DIV), 2);
+          break;                   
+    case MENU_CHAN_PULSEMS:
+          uiLEDState[0] = DGT_P;
+          uiLEDState[1] = DGT_T|SEG_DP;
+          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_PULSEMS), 2);
+          break;                   
+    case MENU_CHAN_RECOVERMS:
+          uiLEDState[0] = DGT_R;
+          uiLEDState[1] = DGT_T|SEG_DP;
+          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_RECOVERMS), 2);
+          break;                   
+    case MENU_CHAN_INVERT:
+          uiLEDState[0] = DGT_P;
+          uiLEDState[1] = DGT_O|SEG_DP;
+          if(synchChannels[menuContext].getParam(CSynchChannel::PARAM_INVERT))
+          {
+            uiLEDState[2] = DGT_L;
+            uiLEDState[3] = DGT_O;
+          }
+          else
+          {
+            uiLEDState[2] = DGT_H;
+            uiLEDState[3] = DGT_I;
+          }
+          break;                   
+     default:
+         uiLEDState[0] = uiLEDState[1] = uiLEDState[2] = uiLEDState[3] = DGT_0;
+         break;
+  }  
 }
 
+///////////////////////////////////////////////////////////////
+// Select NEXT or PREV param
+void menuSelectParam(byte next)
+{
+  switch(menuContext)
+  {
+      case MENU_CONTEXT_GLOBAL:
+        break;
+      case MENU_CONTEXT_CHAN1:
+      case MENU_CONTEXT_CHAN2:
+      case MENU_CONTEXT_CHAN3:
+      case MENU_CONTEXT_CHAN4:
+        if(next)
+        { 
+          if(menuChannelParam >= MENU_CHAN_MAX -1)
+            menuChannelParam = 0;
+          else
+            ++menuChannelParam;
+        }
+        else
+        {
+          if(menuChannelParam <= 0)
+            menuChannelParam = MENU_CHAN_MAX-1;
+          else
+            --menuChannelParam;
+        }        
+        menuDisplayChannelParam();        
+        break;
+  }        
+}
+
+///////////////////////////////////////////////////////////////
+void menuChangeParam(byte inc)
+{
+  switch(menuChannelParam)
+  {
+    case MENU_CHAN_MUTATION:
+      break;
+    case MENU_CHAN_PARAM1:   synchChannels[menuContext].getMutator()->changeParam(0, inc); break;
+    case MENU_CHAN_PARAM2:   synchChannels[menuContext].getMutator()->changeParam(1, inc); break;
+    case MENU_CHAN_PARAM3:   synchChannels[menuContext].getMutator()->changeParam(2, inc); break;
+    case MENU_CHAN_PARAM4:   synchChannels[menuContext].getMutator()->changeParam(3, inc); break;
+    case MENU_CHAN_STEPS:    synchChannels[menuContext].changeParam(CSynchChannel::PARAM_STEPS, inc); break;
+    case MENU_CHAN_DIV:      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_DIV, inc); break;
+    case MENU_CHAN_PULSEMS:  synchChannels[menuContext].changeParam(CSynchChannel::PARAM_PULSEMS, inc); break;
+    case MENU_CHAN_RECOVERMS:synchChannels[menuContext].changeParam(CSynchChannel::PARAM_RECOVERMS, inc); break;
+    case MENU_CHAN_INVERT:   synchChannels[menuContext].changeParam(CSynchChannel::PARAM_INVERT, inc); break;
+  }
+  menuDisplayChannelParam();
+};
+    
+///////////////////////////////////////////////////////////////
+// Select a different meny
+void menuSetContext(byte context)
+{
+  menuContext = context;
+
+  byte leds = uiLEDState[4] & 
+    ~(MENU_LED_CHAN1|MENU_LED_CHAN2|MENU_LED_CHAN3|MENU_LED_CHAN4|MENU_LED_GLOBAL);
+  switch(menuContext)
+  {
+      case MENU_CONTEXT_GLOBAL: leds |= MENU_LED_GLOBAL; break;
+      case MENU_CONTEXT_CHAN1:  leds |= MENU_LED_CHAN1; break;
+      case MENU_CONTEXT_CHAN2:  leds |= MENU_LED_CHAN2; break;
+      case MENU_CONTEXT_CHAN3:  leds |= MENU_LED_CHAN3; break;
+      case MENU_CONTEXT_CHAN4:  leds |= MENU_LED_CHAN4; break;
+  }
+  uiLEDState[4] = leds;
+  menuDisplayChannelParam();
+}
+
+
+///////////////////////////////////////////////////////////////
+// Run the menu
 void menuRun(unsigned long milliseconds)
 {
-  if(!digitalRead(P_SELECT))
+  switch(uiKeyStatus)
   {
+    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_A: // Select + A
+      menuSetContext(MENU_CONTEXT_CHAN1);
+      break;
+    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_B: // Select + B
+      menuSetContext(MENU_CONTEXT_CHAN2);
+      break;
+    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_C: // Select + C
+      menuSetContext(MENU_CONTEXT_CHAN3);
+      break;
+    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_D: // Select + D
+      menuSetContext(MENU_CONTEXT_CHAN4);
+      break;
+      
+    //////
+    
+    case UI_KEY_PRESS|MENU_KEY_PREV:
+      menuSelectParam(0);
+      break;
+    case UI_KEY_PRESS|MENU_KEY_NEXT:
+      menuSelectParam(1);
+      break;
+      
+    case UI_KEY_PRESS|MENU_KEY_DEC:
+    case UI_KEY_PRESS|UI_KEY_DOUBLE|MENU_KEY_DEC:
+    case UI_KEY_HOLD|UI_KEY_AUTO|MENU_KEY_DEC:
+      menuChangeParam(0);
+      break;
+    case UI_KEY_PRESS|MENU_KEY_INC:
+    case UI_KEY_PRESS|UI_KEY_DOUBLE|MENU_KEY_INC:
+    case UI_KEY_HOLD|UI_KEY_AUTO|MENU_KEY_INC:
+      menuChangeParam(1);
+      break;
   }
 }
-
-
+void menuInit()
+{
+  menuChannelParam = 0;
+  menuSetContext(MENU_CONTEXT_CHAN1);
+}
 
 #define HEARTBEAT_PERIOD 200
 byte heartBeatState;
@@ -418,14 +658,13 @@ void setup()
   cli();
   synchInit();  
   heartBeatInit();
-  menuInit();
   uiInit();     
+  menuInit();
   sei();  
 }
 
 
 
-int n = 999;
 unsigned long prevMilliseconds = 0;
 void loop()
 {
@@ -435,35 +674,9 @@ void loop()
     prevMilliseconds = milliseconds;
     synchRun(milliseconds);
     heartBeatRun(milliseconds);
-    //uiShowNumber(W.Intensity);
     uiRun(milliseconds);
     menuRun(milliseconds);
-/*    if(uiKeyStatus[0] & UI_NEW_KEY_PRESS)
-    {
-      uiKeyStatus[0]&=~UI_NEW_KEY_PRESS;
-      if(W.Intensity > 1) W.Intensity--;
-    }
-    if(uiKeyStatus[1] & UI_NEW_KEY_PRESS)
-    {
-      uiKeyStatus[1]&=~UI_NEW_KEY_PRESS;
-      if(W.Intensity < 99) W.Intensity++;
-    }*/
   }
 }
-
-/*
-  Each channel 
-    Mutation Type     Shuf      rAnd    Strt   CUrv
-    Mutation Param 1  1.000
-    Mutation Param 2  2.000
-    Mutation Param 3  3.000
-    Mutation Param 4  4.000
-    Step Count before pattern repeats  St.99
-    Step Divisor  dIv.1
-    Pulse Time      t.100
-    Recovery Time   r.100
-    Invert          Inv.0
-  
-*/
 
 

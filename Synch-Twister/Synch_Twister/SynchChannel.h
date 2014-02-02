@@ -6,14 +6,15 @@
 
 class CSynchChannel
 {
-public:
-  byte OutputPin;            // Arduino digital pin on which the pulse is sent
-  byte Invert;               // output is LOW during tick if set (NB: output is electrically inverted at the buffer)
-  byte PulseTime;            // milliseconds for the output pulse
-  byte PulseRecoverTime;     // minimum milliseconds between pulses
-  byte ActiveSteps;          // Total number of steps used before repeating sequence
+
+  byte outputPin;            // Arduino digital pin on which the pulse is sent
+  byte activeSteps;          // Total number of steps used before repeating sequence
+  byte divider;
+  byte pulseTime;            // milliseconds for the output pulse
+  byte pulseRecoverTime;     // minimum milliseconds between pulses
+  byte invert;               // output is LOW during tick if set (NB: output is electrically inverted at the buffer)
   CMutator *pMutator;
-private:
+  
   enum {
     STATE_READY,   
     STATE_PULSE,
@@ -28,16 +29,104 @@ private:
   byte state;
   
 public: 
+  enum 
+  {
+    PARAM_STEPS,        
+    PARAM_DIV,        
+    PARAM_PULSEMS,        
+    PARAM_RECOVERMS,        
+    PARAM_INVERT        
+  };
+  
+  ////////////////////////////////////////////////////////
   CSynchChannel()
   {
-    Invert = 0;
-    PulseTime = 15;           
-    PulseRecoverTime = 10;
-    ActiveSteps = 16;    
+    invert = 0;
+    pulseTime = 15;           
+    pulseRecoverTime = 10;
+    activeSteps = 16;    
     pMutator = new CNullMutator;
     reset();
   }
+
+  ////////////////////////////////////////////////////////
+  void setOutputPin(byte p)
+  {
+    outputPin = p;
+  }
   
+  ////////////////////////////////////////////////////////
+  CMutator *getMutator() 
+  {
+    return pMutator;
+  }
+  
+  ////////////////////////////////////////////////////////
+  void setMutator(CMutator *p)
+  {
+    if(p)
+    {
+      if(pMutator)
+        delete pMutator;
+      pMutator = p;
+    }    
+  }
+
+  ////////////////////////////////////////////////////////  
+  int setParam(int which, int value)
+  {
+    switch(which)
+    {
+    case PARAM_STEPS:
+      activeSteps = constrain(value,1,99);
+      return activeSteps;
+    case PARAM_DIV:
+      divider = constrain(value,1,99);
+      return divider;
+    case PARAM_PULSEMS:
+      pulseTime = constrain(value,1,99);
+      return pulseTime;
+    case PARAM_RECOVERMS:
+      pulseRecoverTime = constrain(value,1,99);
+      return pulseRecoverTime;    
+    case PARAM_INVERT:        
+      invert = constrain(value,0,1);
+      return invert;    
+    default:
+      return 0;    
+    }
+  }
+  
+  ////////////////////////////////////////////////////////
+  int getParam(int which)
+  {
+    switch(which)
+    {
+    case PARAM_STEPS:
+      return activeSteps;
+    case PARAM_DIV:
+      return divider;
+    case PARAM_PULSEMS:
+      return pulseTime;
+    case PARAM_RECOVERMS:
+      return pulseRecoverTime;    
+    case PARAM_INVERT:        
+      return invert;    
+    default:
+      return 0;    
+    }
+  }
+
+  ////////////////////////////////////////////////////////
+  int changeParam(int which, byte inc)
+  {
+    if(inc)
+      return setParam(which, getParam(which)+1);
+    else
+      return setParam(which, getParam(which)-1);
+  }
+
+  ////////////////////////////////////////////////////////
   void reset()
   {
     currentStep = 0;
@@ -45,32 +134,33 @@ public:
     nextStepTime = 0;
     stateEndTime = 0;
     state = STATE_READY;
-  }
-    
+  }      
   
-  // called in the unlikely event of a millisecond timer rollover
-  // prevents lockup of the state machine
+  ////////////////////////////////////////////////////////
   void timerRollover()
   {
+    // called in the unlikely event of a millisecond timer rollover
+    // prevents lockup of the state machine
     stateEndTime = 0;
   }
   
   // *** The first step can be delayed but never done early
 
+  ////////////////////////////////////////////////////////
   void run(unsigned long milliseconds)
   {
     switch(state)
     {
       case STATE_PULSE:
-          digitalWrite(OutputPin, !Invert); // signal the tick
-          stateEndTime = milliseconds + PulseTime;
+          digitalWrite(outputPin, !invert); // signal the tick
+          stateEndTime = milliseconds + pulseTime;
           state = STATE_PULSING;
           break;
       case STATE_PULSING:
         if(milliseconds > stateEndTime)
         {
-          digitalWrite(OutputPin, !!Invert); // end the tick
-          stateEndTime = milliseconds + PulseRecoverTime;
+          digitalWrite(outputPin, !!invert); // end the tick
+          stateEndTime = milliseconds + pulseRecoverTime;
           state = STATE_RECOVER;
         }
         break;
@@ -80,17 +170,19 @@ public:
         break;
     }          
   }
+  
+  ////////////////////////////////////////////////////////  
   void tick()
   {
     if(STATE_READY == state)
     {
         // After the final step of the loop we are waiting for the last tick
         // of the loop to pass before returning to the first step
-        if(currentStep < ActiveSteps && tickCount >= nextStepTime)
+        if(currentStep < activeSteps && tickCount >= nextStepTime)
         {
           state = STATE_PULSE;
           // skip to next step
-          if(++currentStep < ActiveSteps)     
+          if(++currentStep < activeSteps)     
           {
             nextStepTime = pMutator->getStepTime(currentStep);
           }
@@ -103,7 +195,7 @@ public:
     }      
     
     // Count the tick
-    if(++tickCount >= (TICKS_PER_STEP * ActiveSteps))
+    if(++tickCount >= (TICKS_PER_STEP * activeSteps))
     {
       // we only return to step 0 at the correct
       // end time of the loop      
