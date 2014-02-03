@@ -3,6 +3,19 @@
 #include "Mutators.h"
 #include "SynchChannel.h"
 
+CMutator *CreateMutator(byte mutation)
+{
+  switch(mutation)
+  {
+  case MUTATION_NULL:
+    return new CNullMutator;
+  case MUTATION_SHUFFLE:
+    return new CShuffleMutator;
+  case MUTATION_RANDOM:
+    return new CRandomMutator;
+  }  
+}
+
 ////////////////////////////////////////////////////////
 //
 // DEFINE IO PINS
@@ -522,8 +535,7 @@ void menuChangeParam(byte inc)
 {
   switch(menuChannelParam)
   {
-    case MENU_CHAN_MUTATION:
-      break;
+    case MENU_CHAN_MUTATION: synchChannels[menuContext].changeParam(CSynchChannel::PARAM_MUTATION, inc); break;
     case MENU_CHAN_PARAM1:   synchChannels[menuContext].getMutator()->changeParam(0, inc); break;
     case MENU_CHAN_PARAM2:   synchChannels[menuContext].getMutator()->changeParam(1, inc); break;
     case MENU_CHAN_PARAM3:   synchChannels[menuContext].getMutator()->changeParam(2, inc); break;

@@ -50,12 +50,12 @@ class CNullMutator : public CMutator
 };
 
 /////////////////////////////////////////////////////////////
-// SWING
-class CSwingMutator : public CMutator
+// SHUFFLE
+class CShuffleMutator : public CMutator
 {
   int SwingAmount;  
 public:  
-  CSwingMutator() 
+  CShuffleMutator() 
   {
     SwingAmount = 50;
   }
@@ -125,5 +125,12 @@ public:
   }
 };
 
+enum {
+  MUTATION_NULL,
+  MUTATION_SHUFFLE,
+  MUTATION_RANDOM,
+  MUTATION_MAX
+};
 
+extern CMutator *CreateMutator(byte mutation);
 

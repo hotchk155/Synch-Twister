@@ -13,6 +13,7 @@ class CSynchChannel
   byte pulseTime;            // milliseconds for the output pulse
   byte pulseRecoverTime;     // minimum milliseconds between pulses
   byte invert;               // output is LOW during tick if set (NB: output is electrically inverted at the buffer)
+  byte mutation;
   CMutator *pMutator;
   
   enum {
@@ -31,6 +32,7 @@ class CSynchChannel
 public: 
   enum 
   {
+    PARAM_MUTATION,
     PARAM_STEPS,        
     PARAM_DIV,        
     PARAM_PULSEMS,        
@@ -77,6 +79,10 @@ public:
   {
     switch(which)
     {
+    case PARAM_MUTATION:
+      mutation = constrain(value,0,MUTATION_MAX-1);
+      setMutator(CreateMutator(mutation));
+      return mutation;
     case PARAM_STEPS:
       activeSteps = constrain(value,1,99);
       return activeSteps;
@@ -102,6 +108,8 @@ public:
   {
     switch(which)
     {
+    case PARAM_MUTATION:
+      return mutation;
     case PARAM_STEPS:
       return activeSteps;
     case PARAM_DIV:
