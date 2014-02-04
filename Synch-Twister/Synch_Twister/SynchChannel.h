@@ -13,8 +13,8 @@ class CSynchChannel
   byte pulseTime;            // milliseconds for the output pulse
   byte pulseRecoverTime;     // minimum milliseconds between pulses
   byte invert;               // output is LOW during tick if set (NB: output is electrically inverted at the buffer)
-  byte mutation;
-  CMutator *pMutator;
+  byte mutator;
+  CMutator *pMutator[MUTATOR_MAX];
   
   enum {
     STATE_READY,   
@@ -47,7 +47,11 @@ public:
     pulseTime = 15;           
     pulseRecoverTime = 10;
     activeSteps = 16;    
-    pMutator = new CNullMutator;
+
+    // create the mutators
+    // TODO: Load the config    
+    for(int i = 0; i < MUTATOR_MAX; ++i)
+      pMutator[i] = createMutator(i);
     reset();
   }
 
@@ -60,29 +64,17 @@ public:
   ////////////////////////////////////////////////////////
   CMutator *getMutator() 
   {
-    return pMutator;
+    return pMutator[mutator];
   }
   
-  ////////////////////////////////////////////////////////
-  void setMutator(CMutator *p)
-  {
-    if(p)
-    {
-      if(pMutator)
-        delete pMutator;
-      pMutator = p;
-    }    
-  }
-
   ////////////////////////////////////////////////////////  
   int setParam(int which, int value)
   {
     switch(which)
     {
     case PARAM_MUTATION:
-      mutation = constrain(value,0,MUTATION_MAX-1);
-      setMutator(CreateMutator(mutation));
-      return mutation;
+      mutator = constrain(value,0,MUTATOR_MAX-1);
+      return mutator;
     case PARAM_STEPS:
       activeSteps = constrain(value,1,99);
       return activeSteps;
@@ -109,7 +101,7 @@ public:
     switch(which)
     {
     case PARAM_MUTATION:
-      return mutation;
+      return mutator;
     case PARAM_STEPS:
       return activeSteps;
     case PARAM_DIV:
@@ -192,12 +184,12 @@ public:
           // skip to next step
           if(++currentStep < activeSteps)     
           {
-            nextStepTime = pMutator->getStepTime(currentStep);
+            nextStepTime = pMutator[mutator]->getStepTime(currentStep);
           }
           else
           {
             // the next step will be the first of the loop
-            nextStepTime = pMutator->getStepTime(0);
+            nextStepTime = pMutator[mutator]->getStepTime(0);
           }
         }
     }      

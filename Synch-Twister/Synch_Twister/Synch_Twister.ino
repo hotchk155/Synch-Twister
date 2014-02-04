@@ -1,52 +1,31 @@
+////////////////////////////////////////////////////////
+//
+// SYNCH TWISTER
+//
+////////////////////////////////////////////////////////
+
 #include "Arduino.h"
+#include "TinyUI.h"
 #include "Synch_Twister.h"
 #include "Mutators.h"
 #include "SynchChannel.h"
 
-CMutator *CreateMutator(byte mutation)
+////////////////////////////////////////////////////////
+// Create a mutator.. hook up new mutators here
+CMutator *createMutator(byte which)
 {
-  switch(mutation)
+  switch(which)
   {
-  case MUTATION_NULL:
-    return new CNullMutator;
-  case MUTATION_SHUFFLE:
+  case MUTATOR_NULL:    
+    return new CNullMutator; 
+  case MUTATOR_SHUFFLE: 
     return new CShuffleMutator;
-  case MUTATION_RANDOM:
+  case MUTATOR_RANDOM:  
     return new CRandomMutator;
   }  
+  return new CNullMutator; 
 }
 
-////////////////////////////////////////////////////////
-//
-// DEFINE IO PINS
-//
-////////////////////////////////////////////////////////
-#define P_CLKOUT0 9
-#define P_CLKOUT1 10
-#define P_CLKOUT2 11
-#define P_CLKOUT3 12
-
-#define P_DIGIT0  16
-#define P_DIGIT1  15
-#define P_DIGIT2  14
-#define P_DIGIT3  17
-#define P_DIGIT4  7
-
-#define P_SHCLK  19
-#define P_SHDAT  18
-#define P_SWREAD 8
-#define P_HEARTBEAT 13
-#define P_SELECT 2
-
-#define CBIT_DIGIT0  (1<<2) 
-#define CBIT_DIGIT1  (1<<1)
-#define CBIT_DIGIT2  (1<<0)
-#define CBIT_DIGIT3  (1<<3)
-#define DBIT_DIGIT4  (1<<7)
-#define CBIT_SHCLK   (1<<5)
-#define CBIT_SHDAT   (1<<4)
-#define BBIT_SWREAD  (1<<0)
-#define DBIT_SELECT  (1<<2)
 
 
 
@@ -57,272 +36,60 @@ CMutator *CreateMutator(byte mutation)
 //
 ////////////////////////////////////////////////////////
 
-#define UI_MAXLEDARRAY  5         // number of LED arrays
-#define UI_NUM_SWITCHES 6
-#define UI_DEBOUNCE_MS 20         // key debounce
-#define UI_AUTO_REPEAT_DELAY 500  // delay before key auto repeats
-#define UI_AUTO_REPEAT_PERIOD 50  // delay between auto repeats
-#define UI_DOUBLE_CLICK_TIME 200  // double click threshold
 
-enum 
-{
-  UI_KEY_0      = 0x0001,
-  UI_KEY_1      = 0x0002,
-  UI_KEY_2      = 0x0004,
-  UI_KEY_3      = 0x0008,
-  UI_KEY_4      = 0x0010,
-  UI_KEY_SELECT = 0x0020, // must be next bit after scanned keys
-  
-  UI_KEY_PRESS  = 0x0100,
-  UI_KEY_HOLD   = 0x0200,
-  UI_KEY_AUTO   = 0x0400,
-  UI_KEY_DOUBLE = 0x0800
-};
-
-byte uiLEDState[UI_MAXLEDARRAY];       // the output bit patterns for the LEDs
-byte uiDebounceCount[UI_NUM_SWITCHES];  // debounce registers for switches
-unsigned int uiKeyStatus;              // input status for switches (The one other modules should read)
-unsigned int uiLastKeyStatus;          
-unsigned int uiLastKeypress;           
-unsigned long uiDoubleClickTime; 
-unsigned long uiAutoRepeatTime; 
-byte uiLEDIndex;                   
-byte uiSwitchStates;
-byte uiLastSwitchStates;              
-
-////////////////////////////////////////////////////////
-// Initialise variables
-void uiInit()
-{
-  memset(uiLEDState, 0, sizeof(uiLEDState));
-  memset(uiDebounceCount, 0, sizeof(uiDebounceCount));
-  uiKeyStatus = 0;
-  uiLEDIndex = 0;
-  uiSwitchStates = 0;
-  uiLastSwitchStates = 0;
-  uiAutoRepeatTime = 0;
-  
-  // start the interrupt to service the UI   
-  TCCR2A = 0;
-  TCCR2B = 1<<CS22 | 0<<CS21 | 1<<CS20; // control refresh rate of display
-  TIMSK2 = 1<<TOIE2;
-  TCNT2 = 0; 
-}
-
-////////////////////////////////////////////////////////
-// Interrupt service routing that refreshes the LEDs
-ISR(TIMER2_OVF_vect) 
-{
-  // Read the switch status (do it now, rather than on previous
-  // tick so we can ensure adequate setting time)
-  if(PINB & BBIT_SWREAD)
-    uiSwitchStates |= (1<<uiLEDIndex);
-  else
-    uiSwitchStates &= ~(1<<uiLEDIndex);
-    
-  // Turn off all displays  
-  PORTC &= ~(CBIT_DIGIT0|CBIT_DIGIT1|CBIT_DIGIT2|CBIT_DIGIT3);
-  PORTD &= ~(DBIT_DIGIT4);
-
-  // Unrolled loop to load shift register
-  byte d = uiLEDState[uiLEDIndex];
-  // bit 7    
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x80) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // bit 6
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x40) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // bit 5    
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x20) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // bit 4    
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x10) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // bit 3    
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x08) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // bit 2    
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x04) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // bit 1    
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x02) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // bit 0
-  PORTC &= ~CBIT_SHCLK;
-  if(d & 0x01) PORTC |= CBIT_SHDAT; else PORTC &= ~CBIT_SHDAT;
-  PORTC |= CBIT_SHCLK;
-  // flush    
-  PORTC &= ~CBIT_SHCLK;
-  PORTC |= CBIT_SHCLK;
-  
-  // Turn on the appropriate display
-  switch(uiLEDIndex)
-  {
-    case 0: PORTC |= CBIT_DIGIT0; break;
-    case 1: PORTC |= CBIT_DIGIT1; break;
-    case 2: PORTC |= CBIT_DIGIT2; break;
-    case 3: PORTC |= CBIT_DIGIT3; break;
-    case 4: PORTD |= DBIT_DIGIT4; break;
-  }
-  
-  // Next pass we'll check the next display
-  if(++uiLEDIndex >= UI_MAXLEDARRAY)
-    uiLEDIndex = 0;
-}
-
-////////////////////////////////////////////////////////
-// Configure the LEDs to show a decimal number
-void uiShowNumber(int n, int start=0)
-{  
-  byte xlatDigit[10]  = {  DGT_0,  DGT_1,  DGT_2,  DGT_3,  DGT_4,  DGT_5,  DGT_6,  DGT_7,  DGT_8,  DGT_9 };
-  int div[4] = {1000, 100, 10, 1};
-  if(start < 0 || start >= 4)
-  {
-    uiLEDState[0] = uiLEDState[1] = uiLEDState[2] = uiLEDState[3] = SEG_DP;
-  }
-  else
-  {
-    while(start < 4)
-    {
-      int divider = div[start];
-      uiLEDState[start] = xlatDigit[n/divider]; 
-      n%=divider;
-      ++start;
-    }
-  }
-}
-
-////////////////////////////////////////////////////////
-// Configure the LEDs to show a decimal number
-void uiShowHex(unsigned int n)
-{
-  byte xlatDigit[16]  = {  DGT_0,  DGT_1,  DGT_2,  DGT_3,  DGT_4,  DGT_5,  DGT_6,  DGT_7,  DGT_8,  DGT_9, DGT_A, DGT_B, DGT_C, DGT_D, DGT_E, DGT_F };
-  uiLEDState[0] = xlatDigit[n/0x1000]; n%=0x1000;
-  uiLEDState[1] = xlatDigit[n/0x100]; n%=0x100;
-  uiLEDState[2] = xlatDigit[n/0x10]; n%=0x10;
-  uiLEDState[3] = xlatDigit[n]; 
-}
-
-////////////////////////////////////////////////////////
-// Manage UI functions
-void uiRun(unsigned long milliseconds)
-{
-  // Check the select key, which has its own IO pin
-  if(!digitalRead(P_SELECT))
-    uiSwitchStates |= UI_KEY_SELECT;
-  else  
-    uiSwitchStates &= ~UI_KEY_SELECT;
-    
-  
-  // Manage switch debouncing...
-  byte newKeyPress = 0;
-  for(int i=0; i<UI_NUM_SWITCHES; ++i)
-  {    
-    byte mask = 1<<i;
-    
-    // are we debouncing?
-    if(uiDebounceCount[i])
-    {
-      --uiDebounceCount[i];
-    }
-    else
-    {      
-      if((uiSwitchStates & mask) && !(uiKeyStatus & mask)) // key pressed now, was not before
-      {
-        uiKeyStatus |= mask;
-        uiDebounceCount[i] = UI_DEBOUNCE_MS;        // debounce
-        newKeyPress = 1;
-      }
-      else if(!(uiSwitchStates & mask) && (uiKeyStatus & mask)) // key pressed before, not now
-      {
-        uiKeyStatus &= ~mask;
-        uiDebounceCount[i] = UI_DEBOUNCE_MS;  // debounce
-      }
-    }
-  }
-  
-  // Manage auto repeat etc
-  if(!(uiKeyStatus & 0x00FF)) // no keys pressed
-  {
-    uiKeyStatus = 0;
-    uiAutoRepeatTime = 0; 
-  }
-  else if(uiKeyStatus != uiLastKeyStatus) // change in keypress
-  {
-    uiKeyStatus &= 0x00FF; // clear flags    
-    if(newKeyPress)
-    {
-      if(uiKeyStatus == uiLastKeypress && milliseconds < uiDoubleClickTime)
-        uiKeyStatus |= UI_KEY_DOUBLE;      
-      uiLastKeypress = uiKeyStatus;
-      uiDoubleClickTime = milliseconds + UI_DOUBLE_CLICK_TIME;
-      uiKeyStatus |= UI_KEY_PRESS; 
-    }
-    uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_DELAY;
-  }
-  else 
-  {
-    // keys held - not a new press
-    uiKeyStatus &= ~(UI_KEY_PRESS|UI_KEY_DOUBLE|UI_KEY_AUTO);
-    if(uiAutoRepeatTime < milliseconds)
-    {
-      if(uiKeyStatus & UI_KEY_HOLD)  // key flagged as held?
-        uiKeyStatus |= UI_KEY_AUTO;  // now it is an auto repeat
-      else
-        uiKeyStatus |= UI_KEY_HOLD;  // otherwise flag as held
-      uiAutoRepeatTime = milliseconds + UI_AUTO_REPEAT_PERIOD;
-    }
-  }
-  uiLastKeyStatus = uiKeyStatus;  
-}
 
 
 
 
 /*
 // swing 0-100
-void straightSwing(int *steps, double swing)
-{
-  int t = 0;
-  for(int i=0;i<MAX_STEPS;)
-  {    
-    steps[i++] = t;
-    t += TICKS_PER_STEP;
-    steps[i++] = t + (swing * TICKS_PER_STEP)/100;
-    t += TICKS_PER_STEP;
-  }
-}
-*/
+ void straightSwing(int *steps, double swing)
+ {
+ int t = 0;
+ for(int i=0;i<MAX_STEPS;)
+ {    
+ steps[i++] = t;
+ t += TICKS_PER_STEP;
+ steps[i++] = t + (swing * TICKS_PER_STEP)/100;
+ t += TICKS_PER_STEP;
+ }
+ }
+ */
 
 
 
 
 /*
   we maintain a "tick count" which is a division of musical time (fraction of a beat)
-  rather than absolute time, so it remains valid after changes to the BPM
-  
-  Each tick is 1/96 of a quarter note
-  1/24 of a step
-  at 120bpm
-  96 ticks per beat
-  2 beats per second
-  500ms / 96
-  ~5ms
-*/
+ rather than absolute time, so it remains valid after changes to the BPM
+ 
+ Each tick is 1/96 of a quarter note
+ 1/24 of a step
+ at 120bpm
+ 96 ticks per beat
+ 2 beats per second
+ 500ms / 96
+ ~5ms
+ */
 #define NUM_CHANNELS 4
+enum {
+  SYNCH_STOP,
+  SYNCH_RUN,
+  SYNCH_RESET
+};
+enum {
+  SYNCH_SOURCE_INTERNAL,
+  SYNCH_SOURCE_MIDI,
+  SYNCH_SOURCE_CV,
+  SYNCH_SOURCE_MAX
+};
 CSynchChannel synchChannels[NUM_CHANNELS];
 double synchMillisPerTick; 
 double synchNextTick;
 double synchBPM;
 unsigned long synchLastMilliseconds;
-
+byte synchState;
+byte synchSource;
 void synchSetBPM(double b)
 {
   synchBPM = b;
@@ -335,7 +102,9 @@ void synchInit()
   synchSetBPM(120);
   synchNextTick = 0;
   synchLastMilliseconds = 0;
-  
+  synchState = SYNCH_STOP;
+  synchSource = SYNCH_SOURCE_INTERNAL; 
+
   synchChannels[0].setOutputPin(P_CLKOUT0);
   synchChannels[1].setOutputPin(P_CLKOUT1);
   synchChannels[2].setOutputPin(P_CLKOUT2);
@@ -350,14 +119,12 @@ void synchRun(unsigned long milliseconds)
   if(synchLastMilliseconds > milliseconds)
   {
     // make sure the tickers don't lock up
-    synchChannels[0].timerRollover();
-    synchChannels[1].timerRollover();
-    synchChannels[2].timerRollover();
-    synchChannels[3].timerRollover();
+    for(i=0;i<NUM_CHANNELS;++i)
+      synchChannels[i].timerRollover();
     synchNextTick = 0;
   }
   synchLastMilliseconds = milliseconds;
-  
+
   // Time for the next tick?
   if(synchNextTick < milliseconds)
   {
@@ -377,6 +144,9 @@ void synchRun(unsigned long milliseconds)
   }
 }
 
+void synchReset()
+{
+}
 
 
 ////////////////////////////////////////////////////////
@@ -387,17 +157,18 @@ void synchRun(unsigned long milliseconds)
 
 enum 
 {
-  MENU_KEY_SELECT = UI_KEY_SELECT,
-  MENU_KEY_PREV   = UI_KEY_2,
-  MENU_KEY_NEXT   = UI_KEY_3,
-  MENU_KEY_DEC    = UI_KEY_4,
-  MENU_KEY_INC    = UI_KEY_1,
-  MENU_KEY_ENTER  = UI_KEY_0,
-    
+  MENU_KEY_SELECT = TUI_KEY_A,
+  MENU_KEY_PREV   = TUI_KEY_2,
+  MENU_KEY_NEXT   = TUI_KEY_3,
+  MENU_KEY_DEC    = TUI_KEY_4,
+  MENU_KEY_INC    = TUI_KEY_1,
+  MENU_KEY_ENTER  = TUI_KEY_0,
+
   MENU_KEY_A      = MENU_KEY_NEXT,
   MENU_KEY_B      = MENU_KEY_PREV,
   MENU_KEY_C      = MENU_KEY_INC,
-  MENU_KEY_D      = MENU_KEY_DEC  
+  MENU_KEY_D      = MENU_KEY_DEC,
+  MENU_KEY_GLOBAL = MENU_KEY_ENTER  
 };
 
 enum {  
@@ -415,6 +186,13 @@ enum {
 };
 
 enum {
+  MENU_GLOBAL_RUN = 0,
+  MENU_GLOBAL_BPM,
+  MENU_GLOBAL_SYNCH,
+  MENU_GLOBAL_MAX  
+};
+
+enum {
   MENU_CONTEXT_CHAN1  = 0,
   MENU_CONTEXT_CHAN2  = 1,
   MENU_CONTEXT_CHAN3  = 2,
@@ -424,79 +202,127 @@ enum {
 
 enum 
 {
-  MENU_LED_CHAN1 = 0x01,
-  MENU_LED_CHAN2 = 0x02,
-  MENU_LED_CHAN3 = 0x04,
-  MENU_LED_CHAN4 = 0x08,
-  MENU_LED_GLOBAL = 0x10
+  MENU_LED_CHAN1 = TUI_LED_0,
+  MENU_LED_CHAN2 = TUI_LED_1,
+  MENU_LED_CHAN3 = TUI_LED_2,
+  MENU_LED_CHAN4 = TUI_LED_3,
+  MENU_LED_GLOBAL = TUI_LED_4
 };
 
-byte menuChannelParam;
+byte menuParam;
 byte menuContext;
+
+
+void menuDisplayGlobalParam()
+{
+  switch(menuParam)
+  {
+  case MENU_GLOBAL_RUN:
+    switch(synchState)
+    {
+    case SYNCH_STOP:
+      TUI.show(DGT_S, DGT_T, DGT_O, DGT_P);
+      break;
+    case SYNCH_RUN:
+      TUI.show(DGT_G, DGT_O, SEG_B|SEG_DP);
+      break;
+    case SYNCH_RESET:
+      TUI.show(DGT_R, DGT_S, DGT_T);
+      break;
+    }
+    break;
+  case MENU_GLOBAL_BPM:
+    TUI.show(DGT_T|SEG_DP);
+    TUI.showNumber(synchBPM,1);
+    break;
+  case MENU_GLOBAL_SYNCH:
+    switch(synchSource)
+    {
+    case SYNCH_SOURCE_INTERNAL:
+      TUI.show(DGT_S|SEG_DP, DGT_I, DGT_N, DGT_T);
+      break;
+    case SYNCH_SOURCE_MIDI:
+      TUI.show(DGT_S|SEG_DP, DGT_M, DGT_I, DGT_D);
+      break;
+    case SYNCH_SOURCE_CV:
+      TUI.show(DGT_S|SEG_DP, DGT_E, DGT_X, DGT_T);
+      break;
+    }
+    break;
+  }
+}
 
 void menuDisplayChannelParam()
 {
-  switch(menuChannelParam)
+  switch(menuParam)
   {
-    case MENU_CHAN_MUTATION:
-      synchChannels[menuContext].getMutator()->getName(uiLEDState);
-      break;
-    case MENU_CHAN_PARAM1:
-    case MENU_CHAN_PARAM2:
-    case MENU_CHAN_PARAM3:
-    case MENU_CHAN_PARAM4:
-      {
-        int whichParam = menuChannelParam - MENU_CHAN_PARAM1;
-        byte prefix[4] = { DGT_1, DGT_2, DGT_3, DGT_4 };
-        uiLEDState[0] = prefix[whichParam]|SEG_DP;
-        if(whichParam >= synchChannels[menuContext].getMutator()->getNumParams())
-        {
-          uiLEDState[1] = uiLEDState[2] = uiLEDState[3] = DGT_DASH;
-        }
-        else
-        {
-          uiShowNumber(synchChannels[menuContext].getMutator()->getParam(whichParam), 1);
-        }
-      }
-      break;    
-    case MENU_CHAN_STEPS:      
-          uiLEDState[0] = DGT_S;
-          uiLEDState[1] = DGT_T|SEG_DP;
-          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_STEPS), 2);
-          break;                   
-    case MENU_CHAN_DIV:
-          uiLEDState[0] = DGT_D;
-          uiLEDState[1] = DGT_I|SEG_DP;
-          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_DIV), 2);
-          break;                   
-    case MENU_CHAN_PULSEMS:
-          uiLEDState[0] = DGT_P;
-          uiLEDState[1] = DGT_T|SEG_DP;
-          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_PULSEMS), 2);
-          break;                   
-    case MENU_CHAN_RECOVERMS:
-          uiLEDState[0] = DGT_R;
-          uiLEDState[1] = DGT_T|SEG_DP;
-          uiShowNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_RECOVERMS), 2);
-          break;                   
-    case MENU_CHAN_INVERT:
-          uiLEDState[0] = DGT_P;
-          uiLEDState[1] = DGT_O|SEG_DP;
-          if(synchChannels[menuContext].getParam(CSynchChannel::PARAM_INVERT))
-          {
-            uiLEDState[2] = DGT_L;
-            uiLEDState[3] = DGT_O;
-          }
-          else
-          {
-            uiLEDState[2] = DGT_H;
-            uiLEDState[3] = DGT_I;
-          }
-          break;                   
-     default:
-         uiLEDState[0] = uiLEDState[1] = uiLEDState[2] = uiLEDState[3] = DGT_0;
-         break;
+  case MENU_CHAN_MUTATION:
+    {
+      byte prefix[4] = { 
+        DGT_A, DGT_B, DGT_C, DGT_D       };
+      byte buf[3];
+      synchChannels[menuContext].getMutator()->getName(buf);
+      TUI.show(prefix[menuContext]|SEG_DP, buf[0], buf[1], buf[2]);
+    }
+    break;
+  case MENU_CHAN_PARAM1:
+  case MENU_CHAN_PARAM2:
+  case MENU_CHAN_PARAM3:
+  case MENU_CHAN_PARAM4:
+    {
+      int whichParam = menuParam - MENU_CHAN_PARAM1;
+      byte prefix[4] = { 
+        DGT_1, DGT_2, DGT_3, DGT_4       };
+      TUI.show(prefix[whichParam]|SEG_DP);
+      if(whichParam >= synchChannels[menuContext].getMutator()->getNumParams())      
+        TUI.show(DGT_DASH, DGT_DASH, DGT_DASH, DGT_DASH);
+      else
+        TUI.showNumber(synchChannels[menuContext].getMutator()->getParam(whichParam), 1);
+    }
+    break;    
+  case MENU_CHAN_STEPS:      
+    TUI.show(DGT_S, DGT_T|SEG_DP);
+    TUI.showNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_STEPS), 2);
+    break;                   
+  case MENU_CHAN_DIV:
+    TUI.show(DGT_D, DGT_I|SEG_DP);
+    TUI.showNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_DIV), 2);
+    break;                   
+  case MENU_CHAN_PULSEMS:
+    TUI.show(DGT_P, DGT_T|SEG_DP);
+    TUI.showNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_PULSEMS), 2);
+    break;                   
+  case MENU_CHAN_RECOVERMS:
+    TUI.show(DGT_R, DGT_T|SEG_DP);
+    TUI.showNumber(synchChannels[menuContext].getParam(CSynchChannel::PARAM_RECOVERMS), 2);
+    break;                   
+  case MENU_CHAN_INVERT:
+    if(synchChannels[menuContext].getParam(CSynchChannel::PARAM_INVERT))
+      TUI.show(DGT_P, DGT_O|SEG_DP, DGT_L, DGT_O);
+    else
+      TUI.show(DGT_P, DGT_O|SEG_DP, DGT_H, DGT_I);
+    break;                   
+  default:
+    TUI.show(DGT_0, DGT_0, DGT_0, DGT_0);
+    break;
   }  
+}
+
+///////////////////////////////////////////////////////////////
+void menuDisplayParam()
+{
+  switch(menuContext)
+  {
+  case MENU_CONTEXT_GLOBAL:
+    menuDisplayGlobalParam();
+    break;
+  case MENU_CONTEXT_CHAN1:
+  case MENU_CONTEXT_CHAN2:
+  case MENU_CONTEXT_CHAN3:
+  case MENU_CONTEXT_CHAN4:
+    menuDisplayChannelParam();
+    break;
+  }
 }
 
 ///////////////////////////////////////////////////////////////
@@ -505,117 +331,242 @@ void menuSelectParam(byte next)
 {
   switch(menuContext)
   {
-      case MENU_CONTEXT_GLOBAL:
+    /////////////////////////////
+  case MENU_CONTEXT_GLOBAL:
+    for(;;)
+    {
+      if(next)
+      {
+        if(menuParam >= MENU_GLOBAL_MAX - 1)
+          break;
+        else
+          ++menuParam;
+      }
+      else
+      {
+        if(menuParam <= 0)
+          break;
+        else
+          --menuParam;
+      }
+      if(menuParam != MENU_GLOBAL_BPM || synchSource == SYNCH_SOURCE_INTERNAL) // skip BPM option when not using internal synch
         break;
-      case MENU_CONTEXT_CHAN1:
-      case MENU_CONTEXT_CHAN2:
-      case MENU_CONTEXT_CHAN3:
-      case MENU_CONTEXT_CHAN4:
+    }
+    break;
+
+    /////////////////////////////
+  case MENU_CONTEXT_CHAN1:
+  case MENU_CONTEXT_CHAN2:
+  case MENU_CONTEXT_CHAN3:
+  case MENU_CONTEXT_CHAN4:
+    {
+      bool paramOK;
+      byte numMutatorParams = synchChannels[menuContext].getMutator()->getNumParams();
+      do {
         if(next)
         { 
-          if(menuChannelParam >= MENU_CHAN_MAX -1)
-            menuChannelParam = 0;
+          if(menuParam >= MENU_CHAN_MAX -1)
+            break;
           else
-            ++menuChannelParam;
+            ++menuParam;
         }
         else
         {
-          if(menuChannelParam <= 0)
-            menuChannelParam = MENU_CHAN_MAX-1;
+          if(menuParam <= 0)
+            break;
           else
-            --menuChannelParam;
-        }        
-        menuDisplayChannelParam();        
-        break;
+            --menuParam;
+        }
+
+        switch(menuParam)
+        {
+        case MENU_CHAN_PARAM1:   
+          paramOK = (numMutatorParams > 0); 
+          break;
+        case MENU_CHAN_PARAM2:   
+          paramOK = (numMutatorParams > 1); 
+          break;
+        case MENU_CHAN_PARAM3:   
+          paramOK = (numMutatorParams > 2); 
+          break;
+        case MENU_CHAN_PARAM4:   
+          paramOK = (numMutatorParams > 3); 
+          break;
+        default:
+          paramOK = 1;
+        }          
+      } 
+      while (!paramOK);      
+      break;
+    }
   }        
+  menuDisplayParam();        
 }
 
 ///////////////////////////////////////////////////////////////
 void menuChangeParam(byte inc)
 {
-  switch(menuChannelParam)
+  switch(menuContext)
   {
-    case MENU_CHAN_MUTATION: synchChannels[menuContext].changeParam(CSynchChannel::PARAM_MUTATION, inc); break;
-    case MENU_CHAN_PARAM1:   synchChannels[menuContext].getMutator()->changeParam(0, inc); break;
-    case MENU_CHAN_PARAM2:   synchChannels[menuContext].getMutator()->changeParam(1, inc); break;
-    case MENU_CHAN_PARAM3:   synchChannels[menuContext].getMutator()->changeParam(2, inc); break;
-    case MENU_CHAN_PARAM4:   synchChannels[menuContext].getMutator()->changeParam(3, inc); break;
-    case MENU_CHAN_STEPS:    synchChannels[menuContext].changeParam(CSynchChannel::PARAM_STEPS, inc); break;
-    case MENU_CHAN_DIV:      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_DIV, inc); break;
-    case MENU_CHAN_PULSEMS:  synchChannels[menuContext].changeParam(CSynchChannel::PARAM_PULSEMS, inc); break;
-    case MENU_CHAN_RECOVERMS:synchChannels[menuContext].changeParam(CSynchChannel::PARAM_RECOVERMS, inc); break;
-    case MENU_CHAN_INVERT:   synchChannels[menuContext].changeParam(CSynchChannel::PARAM_INVERT, inc); break;
+  case MENU_CONTEXT_GLOBAL:
+    switch(menuParam)
+    {
+    case MENU_GLOBAL_RUN:
+      switch(synchState)
+      {
+      case SYNCH_STOP:
+        if(inc) 
+          synchState = SYNCH_RUN;
+        else 
+        {
+          synchReset();
+          synchState = SYNCH_RESET;
+        }
+        break;
+      case SYNCH_RUN:
+        if(!inc) synchState = SYNCH_STOP;
+        break;
+      case SYNCH_RESET:
+        if(inc) synchState = SYNCH_RUN;
+        break;
+      }
+    case MENU_GLOBAL_BPM:
+      if(inc && synchBPM < 350) synchSetBPM(synchBPM+1);
+      else if(!inc && synchBPM > 1) synchSetBPM(synchBPM-1);
+      break;
+    case MENU_GLOBAL_SYNCH:
+      break;
+    }
+    break;
+  case MENU_CONTEXT_CHAN1:
+  case MENU_CONTEXT_CHAN2:
+  case MENU_CONTEXT_CHAN3:
+  case MENU_CONTEXT_CHAN4:
+    switch(menuParam)
+    {
+    case MENU_CHAN_MUTATION: 
+      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_MUTATION, inc); 
+      break;
+    case MENU_CHAN_PARAM1:   
+      synchChannels[menuContext].getMutator()->changeParam(0, inc); 
+      break;
+    case MENU_CHAN_PARAM2:   
+      synchChannels[menuContext].getMutator()->changeParam(1, inc); 
+      break;
+    case MENU_CHAN_PARAM3:   
+      synchChannels[menuContext].getMutator()->changeParam(2, inc); 
+      break;
+    case MENU_CHAN_PARAM4:   
+      synchChannels[menuContext].getMutator()->changeParam(3, inc); 
+      break;
+    case MENU_CHAN_STEPS:    
+      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_STEPS, inc); 
+      break;
+    case MENU_CHAN_DIV:      
+      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_DIV, inc); 
+      break;
+    case MENU_CHAN_PULSEMS:  
+      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_PULSEMS, inc); 
+      break;
+    case MENU_CHAN_RECOVERMS:
+      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_RECOVERMS, inc); 
+      break;
+    case MENU_CHAN_INVERT:   
+      synchChannels[menuContext].changeParam(CSynchChannel::PARAM_INVERT, inc); 
+      break;
+    }
+    break;
   }
-  menuDisplayChannelParam();
+  menuDisplayParam();        
 };
-    
+
 ///////////////////////////////////////////////////////////////
 // Select a different meny
 void menuSetContext(byte context)
 {
   menuContext = context;
 
-  byte leds = uiLEDState[4] & 
-    ~(MENU_LED_CHAN1|MENU_LED_CHAN2|MENU_LED_CHAN3|MENU_LED_CHAN4|MENU_LED_GLOBAL);
+  TUI.clearLEDs(MENU_LED_CHAN1|MENU_LED_CHAN2|MENU_LED_CHAN3|MENU_LED_CHAN4|MENU_LED_GLOBAL);
   switch(menuContext)
   {
-      case MENU_CONTEXT_GLOBAL: leds |= MENU_LED_GLOBAL; break;
-      case MENU_CONTEXT_CHAN1:  leds |= MENU_LED_CHAN1; break;
-      case MENU_CONTEXT_CHAN2:  leds |= MENU_LED_CHAN2; break;
-      case MENU_CONTEXT_CHAN3:  leds |= MENU_LED_CHAN3; break;
-      case MENU_CONTEXT_CHAN4:  leds |= MENU_LED_CHAN4; break;
+  case MENU_CONTEXT_GLOBAL: 
+    TUI.setLEDs(MENU_LED_GLOBAL,MENU_LED_GLOBAL); 
+    break;
+  case MENU_CONTEXT_CHAN1:  
+    TUI.setLEDs(MENU_LED_CHAN1,MENU_LED_CHAN1); 
+    break;
+  case MENU_CONTEXT_CHAN2:  
+    TUI.setLEDs(MENU_LED_CHAN2,MENU_LED_CHAN2); 
+    break;
+  case MENU_CONTEXT_CHAN3:  
+    TUI.setLEDs(MENU_LED_CHAN3,MENU_LED_CHAN3); 
+    break;
+  case MENU_CONTEXT_CHAN4:  
+    TUI.setLEDs(MENU_LED_CHAN4,MENU_LED_CHAN4); 
+    break;
   }
-  uiLEDState[4] = leds;
-  menuDisplayChannelParam();
+  menuParam = 0;
+  menuDisplayParam();
 }
+
+
 
 
 ///////////////////////////////////////////////////////////////
 // Run the menu
-void menuRun(unsigned long milliseconds)
+void menuKeyPressHandler(unsigned int keyStatus)
 {
-  switch(uiKeyStatus)
+  switch(keyStatus)
   {
-    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_A: // Select + A
-      menuSetContext(MENU_CONTEXT_CHAN1);
-      break;
-    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_B: // Select + B
-      menuSetContext(MENU_CONTEXT_CHAN2);
-      break;
-    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_C: // Select + C
-      menuSetContext(MENU_CONTEXT_CHAN3);
-      break;
-    case UI_KEY_PRESS|MENU_KEY_SELECT|MENU_KEY_D: // Select + D
-      menuSetContext(MENU_CONTEXT_CHAN4);
-      break;
-      
+  case TUI_PRESS|MENU_KEY_SELECT|MENU_KEY_A: // Select + A
+    menuSetContext(MENU_CONTEXT_CHAN1);
+    break;
+  case TUI_PRESS|MENU_KEY_SELECT|MENU_KEY_B: // Select + B
+    menuSetContext(MENU_CONTEXT_CHAN2);
+    break;
+  case TUI_PRESS|MENU_KEY_SELECT|MENU_KEY_C: // Select + C
+    menuSetContext(MENU_CONTEXT_CHAN3);
+    break;
+  case TUI_PRESS|MENU_KEY_SELECT|MENU_KEY_D: // Select + D
+    menuSetContext(MENU_CONTEXT_CHAN4);
+    break;
+  case TUI_PRESS|MENU_KEY_SELECT|MENU_KEY_GLOBAL: // Select + GLOBAL
+    menuSetContext(MENU_CONTEXT_GLOBAL);
+    break;
+
     //////
-    
-    case UI_KEY_PRESS|MENU_KEY_PREV:
-      menuSelectParam(0);
-      break;
-    case UI_KEY_PRESS|MENU_KEY_NEXT:
-      menuSelectParam(1);
-      break;
-      
-    case UI_KEY_PRESS|MENU_KEY_DEC:
-    case UI_KEY_PRESS|UI_KEY_DOUBLE|MENU_KEY_DEC:
-    case UI_KEY_HOLD|UI_KEY_AUTO|MENU_KEY_DEC:
-      menuChangeParam(0);
-      break;
-    case UI_KEY_PRESS|MENU_KEY_INC:
-    case UI_KEY_PRESS|UI_KEY_DOUBLE|MENU_KEY_INC:
-    case UI_KEY_HOLD|UI_KEY_AUTO|MENU_KEY_INC:
-      menuChangeParam(1);
-      break;
+
+  case TUI_PRESS|MENU_KEY_PREV:
+    menuSelectParam(0);
+    break;
+  case TUI_PRESS|MENU_KEY_NEXT:
+    menuSelectParam(1);
+    break;
+
+  case TUI_PRESS|MENU_KEY_DEC:
+  case TUI_DOUBLE|MENU_KEY_DEC:
+  case TUI_AUTO|MENU_KEY_DEC:
+    menuChangeParam(0);
+    break;
+  case TUI_PRESS|MENU_KEY_INC:
+  case TUI_DOUBLE|MENU_KEY_INC:
+  case TUI_AUTO|MENU_KEY_INC:
+    menuChangeParam(1);
+    break;
   }
 }
+
+///////////////////////////////////////////////////////////////
 void menuInit()
 {
-  menuChannelParam = 0;
   menuSetContext(MENU_CONTEXT_CHAN1);
 }
 
+///////////////////////////////////////////////////////////////
+//
+//                H E A R T B E A T
+//
+///////////////////////////////////////////////////////////////
 #define HEARTBEAT_PERIOD 200
 byte heartBeatState;
 unsigned long nextHeartBeat;
@@ -636,32 +587,22 @@ void heartBeatRun(unsigned long milliseconds)
   }
 }
 
+///////////////////////////////////////////////////////////////
+//
+//                E N T R Y    P O I N T S
+//
+///////////////////////////////////////////////////////////////
 void setup()
 {
-  pinMode(P_DIGIT0, OUTPUT);
-  pinMode(P_DIGIT1, OUTPUT);
-  pinMode(P_DIGIT2, OUTPUT);
-  pinMode(P_DIGIT3, OUTPUT);
-  pinMode(P_DIGIT4, OUTPUT);
-  pinMode(P_SHCLK, OUTPUT);
-  pinMode(P_SHDAT, OUTPUT);
-  pinMode(P_SWREAD, INPUT);
   pinMode(P_SELECT, INPUT);
-
-  digitalWrite(P_DIGIT0, LOW);
-  digitalWrite(P_DIGIT1, LOW);
-  digitalWrite(P_DIGIT2, LOW);
-  digitalWrite(P_DIGIT3, LOW);
-  digitalWrite(P_DIGIT4, LOW);
-  digitalWrite(P_SHCLK, LOW);
-  digitalWrite(P_SHDAT, LOW);
   digitalWrite(P_SELECT, HIGH); //Weak pull-up
+
 
   pinMode(P_CLKOUT0,OUTPUT);
   pinMode(P_CLKOUT1,OUTPUT);
   pinMode(P_CLKOUT2,OUTPUT);
   pinMode(P_CLKOUT3,OUTPUT);
-  
+
   digitalWrite(P_CLKOUT0,HIGH);
   digitalWrite(P_CLKOUT1,HIGH);
   digitalWrite(P_CLKOUT2,HIGH);
@@ -670,7 +611,9 @@ void setup()
   cli();
   synchInit();  
   heartBeatInit();
-  uiInit();     
+  TUI.init();     
+  TUI.setExtraKey(TUI_KEY_A, P_SELECT);
+  TUI.setKeypressHandler(menuKeyPressHandler);
   menuInit();
   sei();  
 }
@@ -686,9 +629,10 @@ void loop()
     prevMilliseconds = milliseconds;
     synchRun(milliseconds);
     heartBeatRun(milliseconds);
-    uiRun(milliseconds);
-    menuRun(milliseconds);
+    TUI.run(milliseconds);
   }
 }
+
+
 
 

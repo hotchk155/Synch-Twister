@@ -1,31 +1,27 @@
-/*
-  virtual byte *getName() = 0;
-  virtual int getNumParams() = 0;
-  virtual int getParam(int index) = 0;
-  virtual int setParam(int index, int value) = 0;
-  int incParam(int index) { return setParam(index, getParam(index) + 1); }
-  int decParam(int index) { return setParam(index, getParam(index) - 1); }
-  virtual int getStepTime(int s) = 0;
-*/
- /*
+/////////////////////////////////////////////////////////////
 //
-//  aaa
-// f   b
-//  ggg
-// e   c
-//  ddd
-#define SEG_A    0x80
-#define SEG_B    0x01
-#define SEG_C    0x04
-#define SEG_D    0x10
-#define SEG_E    0x20
-#define SEG_F    0x40
-#define SEG_G    0x02
-#define SEG_DP   0x08
-      SEG_A|SEG_B|SEG_C|SEG_D|SEG_E|SEG_F|SEG_G
-*/
+// M U T A T O R S
+//
+// These classes define the functions that apply mutations
+// to the straightforward time sequence 
+//
+// Instances of the class contain a specific configuration
+// of the mutation function, based on a set of integer
+// parameters
+//
+/////////////////////////////////////////////////////////////
 
+// Maximum number of parameters that can be associated with
+// any type of muatator
+#define MUTATOR_PARAMS_MAX 4
 
+// Define the types of mutator
+enum {
+  MUTATOR_NULL,
+  MUTATOR_SHUFFLE,
+  MUTATOR_RANDOM,
+  MUTATOR_MAX
+};
 
 /////////////////////////////////////////////////////////////
 // "NULL MUTATOR"
@@ -34,10 +30,9 @@ class CNullMutator : public CMutator
 {
     void getName(byte *buf) 
     { 
-      buf[0] = DGT_N;
-      buf[1] = DGT_O;
-      buf[2] = DGT_N;
-      buf[3] = DGT_E;
+      buf[0] = DGT_DASH;
+      buf[1] = DGT_DASH;
+      buf[2] = DGT_DASH;
   }
     
   int getStepTime(int s) 
@@ -64,8 +59,7 @@ public:
     // Shuf
     buf[0] = DGT_S;
     buf[1] = DGT_H;
-    buf[2] = DGT_U;
-    buf[3] = DGT_F;
+    buf[2] = DGT_F;
   }
   
   int getStepTime(int s)
@@ -99,9 +93,8 @@ public:
   { 
       // rAnd
       buf[0] = DGT_R;
-      buf[1] = DGT_A;
-      buf[2] = DGT_N;
-      buf[3] = DGT_D;
+      buf[1] = DGT_N;
+      buf[2] = DGT_D;
   }
   int getStepTime(int s)
   {
@@ -125,12 +118,5 @@ public:
   }
 };
 
-enum {
-  MUTATION_NULL,
-  MUTATION_SHUFFLE,
-  MUTATION_RANDOM,
-  MUTATION_MAX
-};
 
-extern CMutator *CreateMutator(byte mutation);
 
